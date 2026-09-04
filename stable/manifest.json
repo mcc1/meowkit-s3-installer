@@ -1,0 +1,17 @@
+{
+  "name": "MeowKit S3",
+  "version": "1.0.0",
+  "new_install_prompt_erase": true,
+  "new_install_improv_wait_time": 0,
+  "builds": [
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "../firmware/v1.0.0/meowkit-s3-v1.0.0-factory.bin",
+          "offset": 0
+        }
+      ]
+    }
+  ]
+}
