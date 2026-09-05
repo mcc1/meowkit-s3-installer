@@ -43,6 +43,26 @@ To use another port or open the page yourself:
 .\tools\start-local-installer.ps1 -Port 8080 -NoBrowser
 ```
 
+## "Failed to download manifest" right after flashing
+
+ESP Web Tools re-downloads `manifest.json` after the write phase finishes
+(`_initialize(true)` in its install dialog). If that fetch fails the dialog
+shows "Failed to download manifest" even though the firmware is already fully
+written — do not re-flash, just reboot the device.
+
+The fetch failed because Python's `http.server` speaks HTTP/1.0 by default
+(one TCP connection per request) and on Windows a noticeable share of those
+connections are reset: measured 3 of 40 fetches on a fresh server and 13 of
+40 on one that had run for hours. `start-local-installer.ps1` therefore starts
+the server with `--protocol HTTP/1.1` (Python 3.11+), which measured 0 failures
+in 200 sequential and 15 concurrent fetches. Restart the server after pulling
+this change; a server started before it keeps the old behaviour.
+
+Publishing a new local-test build while a browser is mid-flash also produces
+this error (the channel directory is briefly missing); use
+`meowkit-s3-firmware/tools/publish-local-test.ps1`, which stages the build and
+swaps directories atomically.
+
 ## After installing: leaving download mode
 
 MeowKit has no reset button. When the running firmware is asked to enter the

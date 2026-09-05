@@ -6,7 +6,14 @@ param(
     [switch]$NoBrowser,
 
     [ValidateSet('stable', 'local-test')]
-    [string[]]$RequireChannel = @('local-test')
+    [string[]]$RequireChannel = @('local-test'),
+
+    # HTTP/1.1 keep-alive is the default: the HTTP/1.0 handler opens a new TCP
+    # connection per request and on Windows a share of them get reset (3-13 of
+    # 40 fetches measured), which ESP Web Tools reports as "Failed to download
+    # manifest" right after a successful flash. Needs Python 3.11+.
+    [ValidateSet('HTTP/1.1', 'HTTP/1.0')]
+    [string]$Protocol = 'HTTP/1.1'
 )
 
 Set-StrictMode -Version Latest
@@ -34,7 +41,7 @@ if ($null -ne $existingListener) {
     throw "Port $Port 已被其他程式使用。請改用 -Port 8080，或先停止原本的 server。"
 }
 
-$serverArguments = $pythonArguments + @('-m', 'http.server', $Port, '--bind', '127.0.0.1')
+$serverArguments = $pythonArguments + @('-m', 'http.server', $Port, '--bind', '127.0.0.1', '--protocol', $Protocol)
 $server = $null
 $startParameters = @{
     FilePath         = $pythonCommand.Source
@@ -68,7 +75,7 @@ try {
         throw "local HTTP server 未能在預期時間內啟動：$url"
     }
 
-    Write-Host "Local installer: $url"
+    Write-Host "Local installer: $url  ($Protocol)"
     Write-Host '請使用 desktop Chrome 或 Edge；按 Ctrl+C 結束 server。'
     Write-Host "已驗證 channel：$($RequireChannel -join ', ')"
     Write-Host '更新 generated artifact 後，重新整理瀏覽器即可；不需要重啟 HTTP server。'
