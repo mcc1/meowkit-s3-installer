@@ -1,4 +1,9 @@
-# Generated local-test firmware artifacts
-/firmware/local-test/*.bin
-/firmware/local-test/SHA256SUMS.txt
-/local-test/manifest.json
+# Generated installer site output
+/generated/
+/site/
+/.playwright-cli/
+
+# Legacy generated firmware output paths
+/firmware/*/*.bin
+/firmware/*/SHA256SUMS.txt
+/*/manifest.json

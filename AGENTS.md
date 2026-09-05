@@ -7,9 +7,9 @@ remote when it is configured locally.
 
 ## Personal modifications
 
-- `local-test/manifest.json` and the local-test button in `index.html` expose
-  firmware built from the personal firmware repository.
-- `firmware/local-test/` contains the generated factory image and its
+- `index.html` is a tracked static shell. Its local-test button reads generated
+  metadata and manifest files; do not put version strings in the page source.
+- `generated/` contains the generated factory image, metadata, manifest, and
   `SHA256SUMS.txt`; these are experimental artifacts, not vendor releases.
 - `tools/start-local-installer.ps1` serves this repository over localhost for
   desktop Chrome or Edge Web Serial testing.
@@ -20,8 +20,9 @@ remote when it is configured locally.
 
 - Check this repository's Git status before editing and preserve unrelated
   changes.
-- Update `manifest.json`, the page label, and `SHA256SUMS.txt` together. Prefer
-  `meowkit-s3-firmware/tools/publish-firmware.ps1` for generated artifacts.
+- Do not hand-edit `index.html` for a firmware version. Prefer
+  `meowkit-s3-firmware/tools/publish-firmware.ps1` and validate the resulting
+  `generated/` channel with `tools/validate-site.ps1`.
 - Run `git diff --check` and verify the checksum against the actual binary after
   artifact changes.
 - Do not claim browser Web Serial or device flashing is verified without a

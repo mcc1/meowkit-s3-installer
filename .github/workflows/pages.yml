@@ -1,0 +1,97 @@
+name: Build and deploy installer
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Firmware channel to build
+        required: true
+        type: choice
+        options:
+          - local-test
+          - stable
+        default: local-test
+      version:
+        description: Stable semver, or an explicit local-test version
+        required: false
+        type: string
+      firmware_ref:
+        description: Firmware repository ref to build
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build-site:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout installer source
+        uses: actions/checkout@v4
+        with:
+          path: meowkit-s3-installer
+
+      - name: Checkout firmware source
+        uses: actions/checkout@v4
+        with:
+          repository: mcc1/meowkit-s3-firmware
+          ref: ${{ inputs.firmware_ref }}
+          path: meowkit-s3-firmware
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install PlatformIO
+        run: python -m pip install platformio
+
+      - name: Build firmware and package generated channel
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        env:
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          $arguments = @('-Channel', $env:CHANNEL, '-Force')
+          if (-not [string]::IsNullOrWhiteSpace($env:VERSION)) {
+            $arguments += @('-Version', $env:VERSION)
+          }
+          & .\meowkit-s3-firmware\tools\publish-firmware.ps1 @arguments
+
+      - name: Validate and assemble Pages site
+        shell: pwsh
+        working-directory: ${{ github.workspace }}
+        env:
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          & .\meowkit-s3-installer\tools\prepare-site.ps1 `
+            -GeneratedRoot .\meowkit-s3-installer\generated `
+            -SiteRoot .\meowkit-s3-installer\site `
+            -Channel $env:CHANNEL `
+            -Clean
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: meowkit-s3-installer/site
+
+  deploy:
+    needs: build-site
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

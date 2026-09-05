@@ -65,8 +65,24 @@
     }
 
     .version {
-      margin-bottom: 26px;
+      margin: 0 0 8px;
       font-weight: 650;
+    }
+
+    .channel-status {
+      min-height: 22px;
+      margin: 0 0 26px;
+      color: #777;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .channel-status[data-state="error"] {
+      color: #b42318;
+    }
+
+    .channel-status[data-state="ready"] {
+      color: #067647;
     }
 
     .description {
@@ -100,6 +116,11 @@
 
     .install-button:hover {
       background: #333;
+    }
+
+    .install-button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
     }
 
     .notice {
@@ -140,7 +161,10 @@
 
     <h1>Update your MeowKit</h1>
 
-    <p class="version">Latest stable version: v1.0.0</p>
+    <p class="version" data-channel-version="stable">Stable firmware: checking version…</p>
+    <p class="channel-status" data-channel-status="stable" role="status">
+      Checking stable firmware metadata…
+    </p>
 
     <p class="description">
       Connect MeowKit to your computer using a USB data cable.
@@ -154,8 +178,8 @@
       <li>Confirm installation and wait for completion.</li>
     </ol>
 
-    <esp-web-install-button manifest="./stable/manifest.json">
-      <button slot="activate" class="install-button">
+    <esp-web-install-button manifest="./generated/stable/manifest.json">
+      <button id="stable-install" slot="activate" class="install-button" disabled>
         Connect and install
       </button>
 
@@ -169,10 +193,15 @@
       </span>
     </esp-web-install-button>
 
-    <p class="version">Local test build: local-test-2026-09-05-symbol-keyboard (experimental)</p>
+    <p class="version" data-channel-version="local-test">
+      Local test firmware: checking version…
+    </p>
+    <p class="channel-status" data-channel-status="local-test" role="status">
+      Checking local test firmware metadata…
+    </p>
 
-    <esp-web-install-button manifest="./local-test/manifest.json">
-      <button slot="activate" class="install-button">
+    <esp-web-install-button manifest="./generated/local-test/manifest.json">
+      <button id="local-test-install" slot="activate" class="install-button" disabled>
         Connect and install local test build
       </button>
 
@@ -191,5 +220,97 @@
       Do not disconnect the USB cable during installation.
     </p>
   </main>
+
+  <script>
+    const channels = [
+      {
+        id: "stable",
+        label: "Stable firmware",
+        metadataUrl: "./generated/stable/metadata.json",
+        buttonId: "stable-install"
+      },
+      {
+        id: "local-test",
+        label: "Local test firmware",
+        metadataUrl: "./generated/local-test/metadata.json",
+        buttonId: "local-test-install"
+      }
+    ];
+
+    async function loadJson(url) {
+      const response = await fetch(url, { cache: "no-store" });
+      if (!response.ok) {
+        throw new Error(`${url} returned HTTP ${response.status}`);
+      }
+      return response.json();
+    }
+
+    async function checkChannel(channel) {
+      const versionElement = document.querySelector(
+        `[data-channel-version="${channel.id}"]`
+      );
+      const statusElement = document.querySelector(
+        `[data-channel-status="${channel.id}"]`
+      );
+      const button = document.getElementById(channel.buttonId);
+
+      try {
+        const metadata = await loadJson(channel.metadataUrl);
+        if (metadata.schemaVersion !== 1 || metadata.channel !== channel.id) {
+          throw new Error("metadata schema or channel does not match");
+        }
+        if (typeof metadata.version !== "string" || metadata.version.length === 0) {
+          throw new Error("metadata has no firmware version");
+        }
+        if (typeof metadata.artifact !== "string" || metadata.artifact.length === 0 ||
+            !/^[0-9a-f]{64}$/i.test(metadata.sha256 || "")) {
+          throw new Error("metadata has no valid artifact or SHA256");
+        }
+
+        const metadataUrl = new URL(channel.metadataUrl, window.location.href);
+        const manifestUrl = new URL(metadata.manifest, metadataUrl).href;
+        const manifest = await loadJson(manifestUrl);
+        if (manifest.version !== metadata.version) {
+          throw new Error(
+            `metadata version ${metadata.version} does not match manifest ${manifest.version}`
+          );
+        }
+
+        const parts = manifest.builds?.[0]?.parts;
+        if (!Array.isArray(parts) || parts.length === 0) {
+          throw new Error("manifest has no firmware parts");
+        }
+        if (metadata.artifact !== parts[0].path) {
+          throw new Error("metadata artifact does not match manifest");
+        }
+
+        for (const part of parts) {
+          const artifactUrl = new URL(part.path, manifestUrl).href;
+          const artifactResponse = await fetch(artifactUrl, {
+            method: "HEAD",
+            cache: "no-store"
+          });
+          if (!artifactResponse.ok) {
+            throw new Error(`${artifactUrl} returned HTTP ${artifactResponse.status}`);
+          }
+        }
+
+        const versionPrefix = channel.id === "stable" ? "v" : "";
+        versionElement.textContent = `${channel.label}: ${versionPrefix}${metadata.version}`;
+        statusElement.textContent = `Ready · SHA256 ${metadata.sha256}`;
+        statusElement.dataset.state = "ready";
+        button.disabled = false;
+      } catch (error) {
+        versionElement.textContent = `${channel.label}: unavailable`;
+        statusElement.textContent = `Install disabled: ${error.message}`;
+        statusElement.dataset.state = "error";
+        button.disabled = true;
+      }
+    }
+
+    for (const channel of channels) {
+      checkChannel(channel);
+    }
+  </script>
 </body>
 </html>

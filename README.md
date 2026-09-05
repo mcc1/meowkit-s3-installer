@@ -8,17 +8,18 @@ personal GitHub mirror is `mcc1/meowkit-s3-installer`.
 
 This mirror adds and documents the following local changes:
 
-- A separate local-test installer button and manifest for firmware built from
-  the personal firmware repository.
-- A generated factory image plus `SHA256SUMS.txt` for local reproducibility.
+- A separate local-test installer button whose version and readiness state come
+  from generated metadata and a manifest.
+- A generated factory image, metadata, manifest, and `SHA256SUMS.txt` for
+  local reproducibility.
 - `tools/start-local-installer.ps1`, which serves the installer over localhost
   so desktop Chrome or Edge can use the Web Serial flow.
-- Version labels that distinguish experimental local-test firmware from the
-  vendor's stable factory image.
+- A static `index.html` shell that can be packaged unchanged for GitHub Pages.
 
-These files are shared for inspection and reproducibility by other MeowKit
-owners. The local-test image is experimental and is not an official vendor
-release; verify the source, checksum, and device target before installation.
+The generated files are intentionally not tracked in Git. Recreate them from
+the firmware source with the publish tool before local testing or CI packaging.
+The local-test image is experimental and is not an official vendor release;
+verify the source, checksum, and device target before installation.
 
 ## Start the local installer
 
@@ -30,10 +31,11 @@ repository, run:
 .\tools\start-local-installer.ps1
 ```
 
-The tool starts a local server at `http://localhost:8000/`, opens the default
-browser, and keeps the server alive until you press `Ctrl+C`. Use desktop
-Chrome or Edge, connect MeowKit with a USB data cable, and choose either the
-stable installer or the local-test installer button.
+The tool validates the requested generated channel first, then starts a local
+server at `http://localhost:8000/`, opens the default browser, and keeps the
+server alive until you press `Ctrl+C`. Use desktop Chrome or Edge, connect
+MeowKit with a USB data cable, and choose either the stable installer or the
+local-test installer button.
 
 To use another port or open the page yourself:
 
@@ -41,19 +43,45 @@ To use another port or open the page yourself:
 .\tools\start-local-installer.ps1 -Port 8080 -NoBrowser
 ```
 
-## Firmware artifacts
+## Generated site contract
 
 The firmware repository's `tools/publish-firmware.ps1` prepares the merged
-factory image, manifest, and `SHA256SUMS.txt` for either `stable` or
-`local-test`. It does not flash the device or publish to a hosting service.
+factory image, `metadata.json`, manifest, and `SHA256SUMS.txt` under
+`generated/<channel>/` for either `stable` or `local-test`. It does not flash
+the device, modify `index.html`, or publish to a hosting service.
+
+Validate the generated output:
+
+```powershell
+.\tools\validate-site.ps1 -Channel local-test
+```
+
+Prepare a deployment directory with the same layout that local HTTP serving
+and GitHub Pages will use:
+
+```powershell
+.\tools\prepare-site.ps1 -Channel local-test -SiteRoot .\site -Clean
+```
+
+`generated/` and `site/` are build outputs and are intentionally ignored by
+Git. The tracked `index.html` loads each channel's `metadata.json`, verifies
+the metadata/manifest version match and the factory image availability, and
+keeps the install button disabled when validation fails.
+
+`.github/workflows/pages.yml` is a manual Pages workflow that runs the same
+firmware packaging and `prepare-site.ps1` steps, uploads `site/` with
+`actions/upload-pages-artifact`, and deploys it with `actions/deploy-pages`.
+It is intentionally manual until the firmware channel/version policy is
+stable. The Pages bundle therefore uses the same generated-site contract as
+this local server.
 
 ## Verification status (2026-09-05)
 
 - `start-local-installer.ps1 -Port 18765 -NoBrowser` served `index.html`
   successfully over HTTP (`200`, 5030 bytes), and the test port was released
   after the test server was stopped.
-- The current local-test manifest points to the factory image at flash offset
-  `0`, and its `SHA256SUMS.txt` matches the generated image:
-  `a402738fbfd0621c1fc6e40943ea3917be1c302a5188f435729f51f18e298945`.
+- The current local-test generated metadata points to a factory image at flash
+  offset `0`; `tools/validate-site.ps1` checks its manifest version, checksum,
+  and artifact path before the local server starts.
 - Browser Web Serial connection and actual device flashing are still pending
   physical/browser verification.

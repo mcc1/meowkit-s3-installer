@@ -3,7 +3,10 @@ param(
     [ValidateRange(1, 65535)]
     [int]$Port = 8000,
 
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+
+    [ValidateSet('stable', 'local-test')]
+    [string[]]$RequireChannel = @('local-test')
 )
 
 Set-StrictMode -Version Latest
@@ -17,6 +20,9 @@ if ($null -eq $pythonCommand) {
 if ($null -eq $pythonCommand) {
     throw '找不到 Python。請先安裝 Python，或直接使用其他本地 HTTP server。'
 }
+
+$generatedRoot = Join-Path $installerRoot 'generated'
+& (Join-Path $PSScriptRoot 'validate-site.ps1') -GeneratedRoot $generatedRoot -Channel $RequireChannel
 
 $pythonArguments = @()
 if ($pythonCommand.Name -eq 'py.exe') {
@@ -64,7 +70,8 @@ try {
 
     Write-Host "Local installer: $url"
     Write-Host '請使用 desktop Chrome 或 Edge；按 Ctrl+C 結束 server。'
-    Write-Host '更新 manifest 或 index.html 後，重新整理瀏覽器即可；不需要重啟 HTTP server。'
+    Write-Host "已驗證 channel：$($RequireChannel -join ', ')"
+    Write-Host '更新 generated artifact 後，重新整理瀏覽器即可；不需要重啟 HTTP server。'
     if (-not $NoBrowser) {
         Start-Process $url | Out-Null
     }
