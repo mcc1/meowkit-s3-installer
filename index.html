@@ -337,13 +337,21 @@
      * here with the same ROM WRITE_REG command. */
     import { ESPLoader, Transport } from "https://unpkg.com/esptool-js@0.6.1/bundle.js";
 
-    const RTC_CNTL_OPTION1_REG = 0x6000812c;          // ESP32-S3
+    /* ESP32-S3 RTC_CNTL registers (esptool targets/esp32s3.py). */
+    const RTC_CNTL_OPTION1_REG = 0x6000812c;
     const RTC_CNTL_FORCE_DOWNLOAD_BOOT_MASK = 0x1;
+    const RTC_CNTL_WDTCONFIG0_REG = 0x60008098;
+    const RTC_CNTL_WDTCONFIG1_REG = 0x6000809c;
+    const RTC_CNTL_WDTWPROTECT_REG = 0x600080b0;
+    const RTC_CNTL_WDT_WKEY = 0x50d83aa1;
+    /* (1<<31 enable) | (5<<28 stage0 = system reset) | (1<<8) | 2 -- esptool watchdog_reset() */
+    const RTC_CNTL_WDT_RESET_CONFIG = 0xd0000102;
     const ESPRESSIF_USB_VID = 0x303a;
 
     const rebootButton = document.getElementById("reboot-device");
     const rebootStatus = document.getElementById("reboot-status");
     const quietTerminal = { clean() {}, writeLine() {}, write() {} };
+    let rebootBusy = false;
 
     function setRebootStatus(text, state) {
       rebootStatus.textContent = text;
@@ -354,65 +362,188 @@
       }
     }
 
+    const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    /* Talk to the ROM bootloader on `port`, clear the force-download flag and
+     * reset through the RTC watchdog (RTS fallback). Returns:
+     *   "rebooted"       the chip left the bootloader
+     *   "not-bootloader" no ROM answered (firmware is running normally)
+     *   "busy"           the port is still open elsewhere (install dialog) */
+    async function rebootThroughPort(port) {
+      const transport = new Transport(port, false);
+      const loader = new ESPLoader({
+        transport,
+        baudrate: 115200,
+        romBaudrate: 115200,
+        terminal: quietTerminal
+      });
+      try {
+        setRebootStatus("Talking to the bootloader\u2026");
+        try {
+          await loader.connect("no_reset", 2);
+        } catch (error) {
+          const message = error && error.message ? error.message : String(error);
+          if (/already open|InvalidStateError|Failed to open/i.test(message)) {
+            return "busy";
+          }
+          return "not-bootloader";
+        }
+        const chipName = loader.chip ? loader.chip.CHIP_NAME : "unknown";
+        if (!/ESP32-S3/i.test(chipName)) {
+          throw new Error(`unexpected chip ${chipName}`);
+        }
+
+        /* 1. Clear the flag the Arduino core set to enter the bootloader;
+         *    without this every reset lands in download mode again. */
+        const option1 = await loader.readReg(RTC_CNTL_OPTION1_REG);
+        const hadFlag = (option1 & RTC_CNTL_FORCE_DOWNLOAD_BOOT_MASK) !== 0;
+        await loader.writeReg(RTC_CNTL_OPTION1_REG, (option1 & ~RTC_CNTL_FORCE_DOWNLOAD_BOOT_MASK) >>> 0);
+
+        /* 2. Reset through the RTC watchdog: same SLIP link as the register
+         *    writes, no DTR/RTS emulation (which does not reset this board in
+         *    USB-Serial/JTAG download mode). The last write may go unanswered
+         *    because the chip is already resetting. */
+        setRebootStatus("Resetting (watchdog)\u2026");
+        await loader.writeReg(RTC_CNTL_WDTWPROTECT_REG, RTC_CNTL_WDT_WKEY);
+        await loader.writeReg(RTC_CNTL_WDTCONFIG1_REG, 2000);
+        try {
+          await loader.writeReg(RTC_CNTL_WDTCONFIG0_REG, RTC_CNTL_WDT_RESET_CONFIG);
+          await loader.writeReg(RTC_CNTL_WDTWPROTECT_REG, 0);
+        } catch (_) { /* expected once the reset fires */ }
+        await sleep(800);
+
+        /* 3. Still answering? Then fall back to the classic RTS pulse. */
+        let viaRts = false;
+        try {
+          await loader.readReg(RTC_CNTL_OPTION1_REG, 600);
+          viaRts = true;
+        } catch (_) { /* silence = the chip left the bootloader */ }
+        if (viaRts) {
+          setRebootStatus("Watchdog did not fire, pulsing RTS\u2026");
+          await loader.after("hard_reset");
+        }
+        setRebootStatus(
+          "Rebooted via " + (viaRts ? "RTS" : "watchdog") +
+            ". MeowKit is starting the installed firmware" +
+            (hadFlag ? " (force-download flag cleared)." : "."),
+          "ready"
+        );
+        return "rebooted";
+      } finally {
+        try { await transport.disconnect(); } catch (_) { /* port vanished on reboot */ }
+      }
+    }
+
     if (!("serial" in navigator)) {
       rebootButton.disabled = true;
       setRebootStatus("Web Serial is not available here. Use desktop Chrome or Edge.", "error");
     }
     rebootButton.dataset.ready = "1";
 
+    /* Manual path: the user picks the port. */
     rebootButton.addEventListener("click", async () => {
+      if (rebootBusy) return;
+      rebootBusy = true;
       rebootButton.disabled = true;
-      let transport = null;
       try {
-        setRebootStatus("Select the MeowKit serial port in the browser prompt…");
+        setRebootStatus("Select the MeowKit serial port in the browser prompt\u2026");
         const port = await navigator.serial.requestPort({
           filters: [{ usbVendorId: ESPRESSIF_USB_VID }]
         });
-        transport = new Transport(port, false);
-        const loader = new ESPLoader({
-          transport,
-          baudrate: 115200,
-          romBaudrate: 115200,
-          terminal: quietTerminal
-        });
-
-        setRebootStatus("Talking to the bootloader…");
-        await loader.connect("no_reset", 3);
-        const chipName = loader.chip ? loader.chip.CHIP_NAME : "unknown";
-        if (!/ESP32-S3/i.test(chipName)) {
-          throw new Error(`unexpected chip ${chipName}`);
+        const result = await rebootThroughPort(port);
+        if (result === "busy") {
+          setRebootStatus(
+            "The serial port is still held by the install dialog. Close that dialog, then click Reboot device again.",
+            "error"
+          );
+        } else if (result === "not-bootloader") {
+          setRebootStatus(
+            "Could not reach the bootloader. MeowKit is either running normally or another tab holds the port.",
+            "error"
+          );
         }
-
-        const option1 = await loader.readReg(RTC_CNTL_OPTION1_REG);
-        const cleared = (option1 & ~RTC_CNTL_FORCE_DOWNLOAD_BOOT_MASK) >>> 0;
-        await loader.writeReg(RTC_CNTL_OPTION1_REG, cleared);
-
-        setRebootStatus("Resetting…");
-        await loader.after("hard_reset");
-        setRebootStatus(
-          "Rebooted. MeowKit should start the installed firmware now" +
-            ((option1 & RTC_CNTL_FORCE_DOWNLOAD_BOOT_MASK) ? " (force-download flag was set and has been cleared)." : "."),
-          "ready"
-        );
       } catch (error) {
         const message = error && error.message ? error.message : String(error);
         if (/No port selected/i.test(message)) {
           setRebootStatus("No port selected.");
-        } else if (/Failed to connect/i.test(message)) {
-          setRebootStatus(
-            "Could not reach the bootloader. MeowKit must be in download mode, and no other tab may hold the port.",
-            "error"
-          );
         } else {
           setRebootStatus(`Reboot failed: ${message}`, "error");
         }
       } finally {
-        if (transport) {
-          try { await transport.disconnect(); } catch (_) { /* port vanished on reboot */ }
-        }
         rebootButton.disabled = false;
+        rebootBusy = false;
       }
     });
+
+    /* In-dialog path. ESP Web Tools renders its own "Installation complete!"
+     * page (and an "Installation failed" page that, for "Failed to download
+     * manifest", follows a flash that actually finished). Both keep the serial
+     * port open and offer no working reset on this board, so a "Reboot device"
+     * action is added next to their buttons. Nothing happens until it is
+     * clicked; the dialog's own port is used, so no port picker appears. */
+    function injectRebootAction(dialog) {
+      const root = dialog.shadowRoot;
+      if (!root || root.querySelector("#mk-reboot-action")) return;
+      const done = root.querySelector('ewt-page-message[label="Installation complete!"]');
+      const failed = [...root.querySelectorAll("ewt-page-message")].find((m) =>
+        /Failed to download manifest/i.test(m.getAttribute("label") || m.label || "")
+      );
+      const message = done || failed;
+      if (!message || !message.parentElement) return;
+      const actions = message.parentElement.querySelector('div[slot="actions"]');
+      if (!actions) return;
+
+      const button = document.createElement("ew-text-button");
+      button.id = "mk-reboot-action";
+      button.textContent = done ? "Reboot device" : "Reboot device (firmware was written)";
+      button.addEventListener("click", async () => {
+        if (rebootBusy) return;
+        rebootBusy = true;
+        button.disabled = true;
+        const say = (text) => { message.label = text; message.setAttribute("label", text); };
+        try {
+          const port = dialog.port;
+          if (!port) throw new Error("the dialog has no serial port");
+          /* The dialog re-opened the port after flashing and nothing reads
+           * it in this state, so it can be closed and handed to esptool-js. */
+          try { await port.close(); } catch (_) { /* already closed */ }
+          say("Rebooting MeowKit\u2026");
+          const result = await rebootThroughPort(port);
+          if (result === "rebooted") {
+            say("Rebooted. MeowKit is starting the installed firmware.");
+          } else if (result === "busy") {
+            say("The serial port is still busy; close this dialog and use Reboot device on the page.");
+          } else {
+            say("MeowKit did not answer as a bootloader; it may already be running the firmware.");
+          }
+        } catch (error) {
+          const text = error && error.message ? error.message : String(error);
+          say(`Reboot failed: ${text}`);
+        } finally {
+          rebootBusy = false;
+          button.disabled = false;
+        }
+      });
+      actions.insertBefore(button, actions.firstChild);
+    }
+
+    /* ESP Web Tools appends <ewt-install-dialog> to <body>; watch its shadow
+     * tree so the action is (re)inserted whenever the finished page renders. */
+    const dialogWatcher = new MutationObserver((records) => {
+      for (const record of records) {
+        for (const node of record.addedNodes) {
+          if (node.nodeType !== 1 || node.tagName !== "EWT-INSTALL-DIALOG") continue;
+          const attach = () => {
+            if (!node.shadowRoot) { setTimeout(attach, 50); return; }
+            injectRebootAction(node);
+            new MutationObserver(() => injectRebootAction(node))
+              .observe(node.shadowRoot, { childList: true, subtree: true, attributes: true, attributeFilter: ["label"] });
+          };
+          attach();
+        }
+      }
+    });
+    dialogWatcher.observe(document.body, { childList: true });
   </script>
 </body>
 </html>

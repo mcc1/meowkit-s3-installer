@@ -75,10 +75,22 @@ This is arduino-esp32 issue #6762; esptool.py clears the flag before its hard
 reset, esptool-js does not.
 
 The page therefore has a **Reboot device** button below the channel cards. It
-opens the same serial port, clears the flag with a ROM `WRITE_REG`, and pulses
-RTS. If it cannot reach the bootloader (the board is already running firmware,
-or another tab holds the port), it says so and does nothing else. Fallback:
-hold the power button until MeowKit switches off, then switch it on.
+opens the same serial port, clears the flag with a ROM `WRITE_REG`, then
+resets the chip through the RTC watchdog (`RTC_CNTL_WDT*` registers, the
+sequence esptool.py uses as `--after watchdog-reset`). That path travels over
+the same SLIP link as the register writes; the RTS pulse that ESP Web Tools
+and esptool-js rely on does not reset this board in USB-Serial/JTAG download
+mode (verified: the page reported "Rebooted" while the device stayed in the
+bootloader). If the chip still answers after the watchdog write, the button
+falls back to the RTS pulse and says so. The same routine is also offered
+inside the ESP Web Tools dialog: its "Installation complete!" page (and the
+"Installation failed" page shown for the harmless post-flash "Failed to
+download manifest") gets a **Reboot device** action next to its own buttons,
+which reuses the dialog's already-selected port. Nothing is rebooted unless
+one of these buttons is clicked. If it cannot reach the bootloader
+(the board is already running firmware, or the install dialog still holds the
+port) it says so and does nothing else. Fallback: hold the power button until
+MeowKit switches off, then switch it on.
 
 The stable card shows `generated/stable/metadata.json returned HTTP 404` on a
 local machine because only the `local-test` channel is generated here; that is
