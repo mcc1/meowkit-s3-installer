@@ -1,6 +1,24 @@
 # meowkit-s3-installer
 
-Official web installer for MeowKit-S3 firmware.
+Public personal web-installer mirror for MeowKit-S3 firmware. This is not an
+official vendor release. The original upstream remote is kept as `origin`; the
+personal GitHub mirror is `mcc1/meowkit-s3-installer`.
+
+## Personal modifications
+
+This mirror adds and documents the following local changes:
+
+- A separate local-test installer button and manifest for firmware built from
+  the personal firmware repository.
+- A generated factory image plus `SHA256SUMS.txt` for local reproducibility.
+- `tools/start-local-installer.ps1`, which serves the installer over localhost
+  so desktop Chrome or Edge can use the Web Serial flow.
+- Version labels that distinguish experimental local-test firmware from the
+  vendor's stable factory image.
+
+These files are shared for inspection and reproducibility by other MeowKit
+owners. The local-test image is experimental and is not an official vendor
+release; verify the source, checksum, and device target before installation.
 
 ## Start the local installer
 
