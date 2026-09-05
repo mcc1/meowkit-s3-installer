@@ -1,4 +1,4 @@
-[CmdletBinding()]
+﻿[CmdletBinding()]
 param(
     [ValidateRange(1, 65535)]
     [int]$Port = 8000,
@@ -40,6 +40,7 @@ $startParameters = @{
 $server = Start-Process @startParameters
 
 $url = "http://localhost:$Port/index.html"
+$probeUrl = "http://127.0.0.1:$Port/index.html"
 try {
     $ready = $false
     for ($attempt = 0; $attempt -lt 40; $attempt++) {
@@ -47,7 +48,7 @@ try {
             throw "local HTTP server 提前結束，exit code $($server.ExitCode)"
         }
         try {
-            $response = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 2
+            $response = Invoke-WebRequest -Uri $probeUrl -UseBasicParsing -TimeoutSec 2
             if ($response.StatusCode -eq 200) {
                 $ready = $true
                 break
@@ -63,6 +64,7 @@ try {
 
     Write-Host "Local installer: $url"
     Write-Host '請使用 desktop Chrome 或 Edge；按 Ctrl+C 結束 server。'
+    Write-Host '更新 manifest 或 index.html 後，重新整理瀏覽器即可；不需要重啟 HTTP server。'
     if (-not $NoBrowser) {
         Start-Process $url | Out-Null
     }

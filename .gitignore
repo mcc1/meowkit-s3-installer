@@ -1,0 +1,4 @@
+# Generated local-test firmware artifacts
+/firmware/local-test/*.bin
+/firmware/local-test/SHA256SUMS.txt
+/local-test/manifest.json

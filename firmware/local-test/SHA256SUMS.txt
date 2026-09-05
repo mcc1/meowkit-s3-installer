@@ -1,1 +1,0 @@
-a402738fbfd0621c1fc6e40943ea3917be1c302a5188f435729f51f18e298945  meowkit-s3-local-test-factory.bin
