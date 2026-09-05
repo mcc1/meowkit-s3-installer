@@ -169,8 +169,25 @@
       </span>
     </esp-web-install-button>
 
+    <p class="version">Local test build: local-test-2026-09-05-symbol-keyboard (experimental)</p>
+
+    <esp-web-install-button manifest="./local-test/manifest.json">
+      <button slot="activate" class="install-button">
+        Connect and install local test build
+      </button>
+
+      <span slot="unsupported" class="warning">
+        Please use Google Chrome or Microsoft Edge
+        on a desktop computer.
+      </span>
+
+      <span slot="not-allowed" class="warning">
+        Firmware installation requires HTTPS.
+      </span>
+    </esp-web-install-button>
+
     <p class="notice">
-      Installing the factory firmware may reset device settings.
+      Installing factory or local test firmware may reset device settings.
       Do not disconnect the USB cable during installation.
     </p>
   </main>
