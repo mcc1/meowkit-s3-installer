@@ -215,6 +215,19 @@
       </span>
     </esp-web-install-button>
 
+    <p class="version">Device stays in download mode after installing?</p>
+    <p class="channel-status" id="reboot-status" role="status">
+      ESP32-S3 boards that enter the bootloader from the running firmware keep a
+      "force download" flag set, so the automatic reset after installing lands in
+      the bootloader again. This button clears the flag and reboots MeowKit.
+    </p>
+    <button id="reboot-device" class="install-button" type="button">
+      Reboot device
+    </button>
+    <p class="notice">
+      Fallback: hold the power button until MeowKit switches off, then switch it on again.
+    </p>
+
     <p class="notice">
       Installing factory or local test firmware may reset device settings.
       Do not disconnect the USB cable during installation.
@@ -311,6 +324,95 @@
     for (const channel of channels) {
       checkChannel(channel);
     }
+  </script>
+
+  <script type="module">
+    /* Reboot out of ROM download mode.
+     *
+     * The Arduino core enters the bootloader by setting RTC_CNTL_FORCE_DOWNLOAD_BOOT
+     * in RTC_CNTL_OPTION1_REG and rebooting (arduino-esp32 issue #6762). That bit
+     * survives the RTS-emulated reset that ESP Web Tools performs after flashing,
+     * so the chip re-enters download mode. esptool.py clears the bit before its
+     * hard reset (esptool targets/esp32s3.py); esptool-js does not, so we do it
+     * here with the same ROM WRITE_REG command. */
+    import { ESPLoader, Transport } from "https://unpkg.com/esptool-js@0.6.1/bundle.js";
+
+    const RTC_CNTL_OPTION1_REG = 0x6000812c;          // ESP32-S3
+    const RTC_CNTL_FORCE_DOWNLOAD_BOOT_MASK = 0x1;
+    const ESPRESSIF_USB_VID = 0x303a;
+
+    const rebootButton = document.getElementById("reboot-device");
+    const rebootStatus = document.getElementById("reboot-status");
+    const quietTerminal = { clean() {}, writeLine() {}, write() {} };
+
+    function setRebootStatus(text, state) {
+      rebootStatus.textContent = text;
+      if (state) {
+        rebootStatus.dataset.state = state;
+      } else {
+        delete rebootStatus.dataset.state;
+      }
+    }
+
+    if (!("serial" in navigator)) {
+      rebootButton.disabled = true;
+      setRebootStatus("Web Serial is not available here. Use desktop Chrome or Edge.", "error");
+    }
+    rebootButton.dataset.ready = "1";
+
+    rebootButton.addEventListener("click", async () => {
+      rebootButton.disabled = true;
+      let transport = null;
+      try {
+        setRebootStatus("Select the MeowKit serial port in the browser prompt…");
+        const port = await navigator.serial.requestPort({
+          filters: [{ usbVendorId: ESPRESSIF_USB_VID }]
+        });
+        transport = new Transport(port, false);
+        const loader = new ESPLoader({
+          transport,
+          baudrate: 115200,
+          romBaudrate: 115200,
+          terminal: quietTerminal
+        });
+
+        setRebootStatus("Talking to the bootloader…");
+        await loader.connect("no_reset", 3);
+        const chipName = loader.chip ? loader.chip.CHIP_NAME : "unknown";
+        if (!/ESP32-S3/i.test(chipName)) {
+          throw new Error(`unexpected chip ${chipName}`);
+        }
+
+        const option1 = await loader.readReg(RTC_CNTL_OPTION1_REG);
+        const cleared = (option1 & ~RTC_CNTL_FORCE_DOWNLOAD_BOOT_MASK) >>> 0;
+        await loader.writeReg(RTC_CNTL_OPTION1_REG, cleared);
+
+        setRebootStatus("Resetting…");
+        await loader.after("hard_reset");
+        setRebootStatus(
+          "Rebooted. MeowKit should start the installed firmware now" +
+            ((option1 & RTC_CNTL_FORCE_DOWNLOAD_BOOT_MASK) ? " (force-download flag was set and has been cleared)." : "."),
+          "ready"
+        );
+      } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        if (/No port selected/i.test(message)) {
+          setRebootStatus("No port selected.");
+        } else if (/Failed to connect/i.test(message)) {
+          setRebootStatus(
+            "Could not reach the bootloader. MeowKit must be in download mode, and no other tab may hold the port.",
+            "error"
+          );
+        } else {
+          setRebootStatus(`Reboot failed: ${message}`, "error");
+        }
+      } finally {
+        if (transport) {
+          try { await transport.disconnect(); } catch (_) { /* port vanished on reboot */ }
+        }
+        rebootButton.disabled = false;
+      }
+    });
   </script>
 </body>
 </html>

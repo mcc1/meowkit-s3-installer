@@ -43,6 +43,27 @@ To use another port or open the page yourself:
 .\tools\start-local-installer.ps1 -Port 8080 -NoBrowser
 ```
 
+## After installing: leaving download mode
+
+MeowKit has no reset button. When the running firmware is asked to enter the
+bootloader (ESP Web Tools toggles DTR/RTS on the USB CDC port), the Arduino
+core sets the `RTC_CNTL_FORCE_DOWNLOAD_BOOT` flag and reboots into the ROM
+download mode over USB-Serial/JTAG. That flag survives the RTS-emulated reset
+that ESP Web Tools issues after flashing, so the board comes back up in the
+bootloader again (blank screen, `USB JTAG/serial debug unit` still present).
+This is arduino-esp32 issue #6762; esptool.py clears the flag before its hard
+reset, esptool-js does not.
+
+The page therefore has a **Reboot device** button below the channel cards. It
+opens the same serial port, clears the flag with a ROM `WRITE_REG`, and pulses
+RTS. If it cannot reach the bootloader (the board is already running firmware,
+or another tab holds the port), it says so and does nothing else. Fallback:
+hold the power button until MeowKit switches off, then switch it on.
+
+The stable card shows `generated/stable/metadata.json returned HTTP 404` on a
+local machine because only the `local-test` channel is generated here; that is
+expected, not a fault of the page.
+
 ## Generated site contract
 
 The firmware repository's `tools/publish-firmware.ps1` prepares the merged
